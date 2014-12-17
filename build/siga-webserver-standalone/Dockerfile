@@ -12,8 +12,10 @@ RUN	yum -y install httpd mod_ssl
 RUN	sed '/^[^#]/s/^/#/'  /etc/httpd/conf.d/welcome.conf > /tmp/welcome.conf \
 	&& mv -v /tmp/welcome.conf /etc/httpd/conf.d/welcome.conf
 
-# Adiciona arquivo de configuracao do Apache HTTPD para acesso ao Sigadoc.
-ADD	etc/httpd/conf.d/sigadoc.conf /etc/httpd/conf.d/sigadoc.conf
+# Adiciona arquivo(s) de configuracao do Apache HTTPD para acesso ao Sigadoc.
+COPY	etc/httpd/conf/httpd.conf /etc/httpd/conf/httpd.conf
+COPY	etc/httpd/conf.d/sigadoc.conf /etc/httpd/conf.d/sigadoc.conf
+COPY	etc/httpd/conf.d/security.conf /etc/httpd/conf.d/security.conf
 
 # Disponibiliza porta TCP 80 para conexoes com o mundo exterior
 EXPOSE	80 443

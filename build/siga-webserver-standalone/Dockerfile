@@ -5,7 +5,7 @@ MAINTAINER	"Anderson Deluiz <anderson.deluiz@gpnet.com.br>"
 # Atualiza imagem com ultimos pacotes disponibilizados
 RUN	yum -y update
 
-# Instala servico HTTP e registra para inicio automatico
+# Instala servico Apache HTTPD com suporte a SSL
 RUN	yum -y install httpd mod_ssl
 
 # Desabilita pagina de boas vindas no servidor Apache HTTPD
@@ -20,5 +20,5 @@ COPY	etc/httpd/conf.d/security.conf /etc/httpd/conf.d/security.conf
 # Disponibiliza porta TCP 80 para conexoes com o mundo exterior
 EXPOSE	80 443
 
-# Inicia daemon HTTP automaticamente ao inciar o conteiner sem argumentos
+# Inicia daemon HTTP automaticamente ao inciar o conteiner
 ENTRYPOINT	["/usr/sbin/httpd","-D","FOREGROUND","-D","SSL"]

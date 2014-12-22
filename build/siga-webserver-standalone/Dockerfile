@@ -10,7 +10,7 @@ RUN	yum -y install httpd mod_ssl
 
 # Desabilita pagina de boas vindas no servidor Apache HTTPD
 RUN	sed '/^[^#]/s/^/#/'  /etc/httpd/conf.d/welcome.conf > /tmp/welcome.conf \
-	&& mv -v /tmp/welcome.conf /etc/httpd/conf.d/welcome.conf
+	   && mv -v /tmp/welcome.conf /etc/httpd/conf.d/welcome.conf
 
 # Adiciona arquivo(s) de configuracao do Apache HTTPD para acesso ao Sigadoc.
 COPY	etc/httpd/conf/httpd.conf /etc/httpd/conf/httpd.conf

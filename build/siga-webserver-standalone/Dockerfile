@@ -21,4 +21,4 @@ COPY	etc/httpd/conf.d/security.conf /etc/httpd/conf.d/security.conf
 EXPOSE	80 443
 
 # Inicia daemon HTTP automaticamente ao inciar o conteiner
-ENTRYPOINT	["/usr/sbin/httpd","-D","FOREGROUND","-D","SSL"]
+#ENTRYPOINT	["/usr/sbin/httpd","-D","FOREGROUND","-D","SSL"]

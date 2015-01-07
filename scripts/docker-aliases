@@ -1,0 +1,199 @@
+#!/bin/bash
+################################################################################
+# @author      Anderson Deluiz <anderson.santos@gpnet.com.br>                  #
+# @name        docker-aliases                                                  #
+# @version     1.0                                                             #
+# @date        Jan 5th, 2014                                                   #
+# @description Aliases para simplificar o uso de comandos docker.              #
+#                                                                              #
+# @require     N/A                                                             #
+#                                                                              #
+# @usage       Para carregar os aliases, estando no bash prompt execute:       #
+#              # . docker-aliases                                              #
+#                                                                              #
+################################################################################
+
+#---------------------------        INCLUDE       -----------------------------#
+
+#---------------------------     DEBUG OPTIONS    -----------------------------#
+# uncomment line(s) to activate debug function
+# set -x    # print a trace of simple commands and their arguments
+# set -v    # print shell input lines as they are read
+# set -n    # read commands but do not execute them
+
+#---------------------------   GLOBAL VARIABLES   -----------------------------#
+MyName=$(basename $0)
+OSName=$(uname -s)
+
+# Cria array associativo com diretorios padrao de localizacao de Dockerfile
+declare -A BuildDirectoryDefault
+BuildDirectoryDefault[app]=/opt/docker/build/siga-appserver-standalone
+BuildDirectoryDefault[web]=/opt/docker/build/siga-webserver-standalone
+
+# Text output modifiers
+TextBold=$(tput bold)
+TextReverse=$(tput rev)
+TextNormal=$(tput sgr0)
+
+#---------------------------       FUNCTIONS      -----------------------------#
+
+#------------------------------------------------------------------------------#
+# @function    usage                                                           #
+# @description Displays usage of this script and help messages and exit script.#
+#                                                                              #
+# @usage       usage                                                           #
+# @in          none                                                            #
+# @return      none                                                            #
+# @return-code                                                                 #
+#              none                                                            #
+# @exit-code                                                                   #
+#              255 - normal exit code                                          #
+#------------------------------------------------------------------------------#
+usage()
+{
+   cat << _EOF_
+${TextBold}
+Uso: ${MyName} COMANDO [ARGS] 
+
+Provê funções básicas de uso para imagens Docker utilizadas pela aplicação SIGA.
+
+Comandos:
+${TextNormal}
+   build <BuildType> [BuildDirectory]
+        Cria uma imagem a partir de um Dockerfile.
+        Argumentos:
+           BuildType - especifica que tipo de imagem sera criada.
+              Tipo de imagem:
+                 app - Servidor de aplicação JBoss standalone
+                 web - Servidor Apache HTTPD
+           BuildDirectory - diretório onde está localizado o arquivo Dockerfile.
+
+   del <ImageType> [BuildNumber] 
+        Exclui imagem do tipo indicado por ImageType. Caso não seja informado o
+        BuildNumber, serão mostradas todas as imagens disponíveis.
+        Argumentos:
+           ImageType - especifica que tipo de imagem sera executada.
+              Tipo de imagem:
+                 app - Servidor de aplicação JBoss standalone
+                 web - Servidor Apache HTTPD
+
+   run <ImageType> [BuildNumber] 
+        Executa imagem do tipo indicado por ImageType. Caso não seja informado o
+        BuildNumber, será executada a imagem mais recente.
+        Argumentos:
+           ImageType - especifica que tipo de imagem sera executada.
+              Tipo de imagem:
+                 app - Servidor de aplicação JBoss standalone
+                 web - Servidor Apache HTTPD
+
+_EOF_
+
+   exit 255
+}
+
+#------------------------------------------------------------------------------#
+# @function    sigaBuild                                                       #
+# @description Builds Docker images and tags them.                             #
+#                                                                              #
+# @usage       sigaBuild <BuildType> [BuildDirectory]                          #
+# @in          none                                                            #
+# @return      none                                                            #
+# @return-code                                                                 #
+#              none                                                            #
+# @exit-code                                                                   #
+#              255 - normal exit code                                          #
+#------------------------------------------------------------------------------#
+sigaBuild ()
+{
+   local -a WebImages
+   local LastBuildNumber BuildType BuildDirectory
+
+   BuildType=$1
+   BuildDirectory=${BuildDirectoryDefault[${BuildType}]}
+
+   if [ $# -eq 2 ]
+   then
+      BuildDirectory=$2
+   fi
+
+   if [ ! -r ${BuildDirectory}/Dockerfile ]
+   then
+      echo "${TextBold}ERROR: File ${BuildDirectory}/Dockerfile doesn't exist or doesn't have read permission.${TextNormal}"
+      return 1
+   fi
+
+   # Carrega array com imagens ordenadas do decrescentemente pelo build number.
+   # Desta forma, o build mais recente sempre sera o que vira primeiro no array.
+   ArrayImages=($(docker images siga/${BuildType}server | awk '{if (NR != 1) if ($2 ~ /build-[0-9]*/) print $1":"$2}' | sort -r))
+
+   LastBuildNumber=$(cut -d'-' -f 2 <<< ${ArrayImages[0]})
+   NewBuildNumber=$(printf "%05d" $((LastBuildNumber + 1)))
+
+   echo "Last Build number is: ${TextBold}${LastBuildNumber}${TextNormal}"
+   echo "New Build number will be: ${TextBold}${NewBuildNumber}${TextNormal}"
+
+   echo "Building New Image! Please wait..."
+   docker build --tag=siga/${BuildType}server:build-${NewBuildNumber} --no-cache --force-rm ${BuildDirectory} 
+
+   if [ $? -eq 0 ]
+   then
+      echo
+      echo "${TextBold}Successfully built image siga/${BuildType}server:build-${NewBuildNumber}${TextNormal}!!!"
+      echo 
+      docker tag siga/${BuildType}server:build-${NewBuildNumber} siga/${BuildType}server:latest
+      if [ $? -eq 0 ]
+      then
+         echo "${TextBold}Image siga/${BuildType}server:build-${NewBuildNumber} tagged as siga/${BuildType}server:latest${TextNormal}"
+         return 0
+      fi
+      echo "WARNING: Couldn't tag image ${TextBold}siga/${BuildType}server:build-${NewBuildNumber}${TextNormal} as ${TextBold}siga/${BuildType}server:latest${TextNormal}"
+      return 0
+   fi
+
+   return 2
+}
+
+sigaRun()
+{
+   :
+}
+
+sigaRemove()
+{
+   :
+}
+#---------------------------     MAIN SECTION     -----------------------------#
+# Executa conteiners em segundo plano
+alias siga-run-webserver-background="docker run -d --name=\"siga-webserver\" -h \"siga-webserver\" -p 80:80 -p 443:443 --link=siga-appserver:siga-appserver -it -m 256m siga/webserver:latest"
+alias siga-run-webserver-foreground="docker run -rm --name=\"siga-webserver\" -h \"siga-webserver\" -p 80:80 -p 443:443 --link=siga-appserver:siga-appserver -it -m 256m siga/webserver:latest"
+
+alias siga-run-webserver-bash="docker run --rm --name=\"siga-webserver\" -h \"siga-webserver\" -p 80:80 -p 443:443 --link=siga-appserver:siga-appserver -it -m 256m siga/webserver:latest /bin/bash"
+
+alias siga-run-appserver-background="docker run -d --name=\"siga-appserver\" -h \"siga-appserver\" -p 8080:8080 -p 8443:8443 -p 9990:9990 siga/appserver:latest"
+alias siga-run-appserver-foreground="docker run --rm --name=\"siga-appserver\" -h \"siga-appserver\" -p 8080:8080 -p 8443:8443 -p 9990:9990 siga/appserver:latest"
+alias siga-run-appserver-bash="docker run -it --rm --name=\"siga-appserver\" -h \"siga-appserver\" -p 8080:8080 -p 8443:8443 -p 9990:9990 --entrypoint=\"/bin/bash\" siga/appserver:latest"
+
+alias siga-run-appserver-admin="docker run -it --rm --name=\"siga-appserver\" -h \"siga-appserver\" -p 8080:8080 -p 8443:8443 -p 9990:9990 siga/appserver:latest /bin/bash"
+
+alias siga-rmi-webserver="docker rmi siga:webserver"
+alias siga-rmi-appserver="docker rmi siga/appserver:latest && docker rmi 10.34.15.71:5000/centos-jboss-02"
+
+
+################################################################################
+# Iniciar aplicacao Siga no conteiner
+#
+# mkdir -p /var/log/jboss/sigadoc \
+#    && cd /opt/jboss/bin \
+#    && ./standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -Djboss.home.dir=/opt/jboss -Djboss.server.base.dir=/opt/jboss/sigadoc/ -Djboss.server.log.dir=/var/log/jboss -Djboss.socket.binding.port-offset=0
+
+################################################################################
+# Para "attachar" a um conteiner em execucao e sair sem para o conteiner:
+#
+# 1. "Attachar" ao conteiner com o comando :
+#
+#    # docker attach --sig-proxy=false NAME
+#
+# 2. Verificar o que for preciso no conteiner.
+#
+# 3. Sair do conteiner utilizando CTRL+C.
+

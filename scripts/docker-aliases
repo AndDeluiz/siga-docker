@@ -22,18 +22,20 @@
 # set -n    # read commands but do not execute them
 
 #---------------------------   GLOBAL VARIABLES   -----------------------------#
-MyName=$(basename $0)
+myName=$(basename $0)
 OSName=$(uname -s)
+myVersion=$(awk '/^# @version/ {print $3}' ${myName})
+myHostname=$(hostname)
 
 # Cria array associativo com diretorios padrao de localizacao de Dockerfile
-declare -A BuildDirectoryDefault
-BuildDirectoryDefault[app]=/opt/docker/build/siga-appserver-standalone
-BuildDirectoryDefault[web]=/opt/docker/build/siga-webserver-standalone
+declare -A buildDirectoryDefault
+buildDirectoryDefault[app]=/opt/docker/build/siga-appserver-standalone
+buildDirectoryDefault[web]=/opt/docker/build/siga-webserver-standalone
 
 # Text output modifiers
-TextBold=$(tput bold)
-TextReverse=$(tput rev)
-TextNormal=$(tput sgr0)
+textBold=$(tput bold)
+textReverse=$(tput rev)
+textNormal=$(tput sgr0)
 
 #---------------------------       FUNCTIONS      -----------------------------#
 
@@ -52,32 +54,37 @@ TextNormal=$(tput sgr0)
 usage()
 {
    cat << _EOF_
-${TextBold}
-Uso: ${MyName} COMANDO [ARGS] 
+${textBold}
+${myName} v${myVersion}
+
+Uso: ${myName} COMANDO [ARGS] 
 
 Provê funções básicas de uso para imagens Docker utilizadas pela aplicação SIGA.
 
 Comandos:
-${TextNormal}
-   build <BuildType> [BuildDirectory]
+${textNormal}
+${textBold}   build <buildType> [buildDirectory]${textNormal}
         Cria uma imagem a partir de um Dockerfile.
         Argumentos:
-           BuildType - especifica que tipo de imagem sera criada.
+           buildType - especifica que tipo de imagem sera criada.
               Tipo de imagem:
                  app - Servidor de aplicação JBoss standalone
                  web - Servidor Apache HTTPD
-           BuildDirectory - diretório onde está localizado o arquivo Dockerfile.
+           buildDirectory - diretório onde está localizado o arquivo Dockerfile.
 
-   del <ImageType> [BuildNumber] 
-        Exclui imagem do tipo indicado por ImageType. Caso não seja informado o
-        BuildNumber, serão mostradas todas as imagens disponíveis.
+${textBold}   rmi <ImageType> [BuildNumber]${textNormal}
+        Remove imagem do tipo indicado por ImageType. Caso não seja informado o
+        BuildNumber, serão mostradas todas as imagens disponíveis para escolha.
         Argumentos:
            ImageType - especifica que tipo de imagem sera executada.
               Tipo de imagem:
                  app - Servidor de aplicação JBoss standalone
                  web - Servidor Apache HTTPD
 
-   run <ImageType> [BuildNumber] 
+${textBold}   help${textNormal}
+        Exibe esta mensagem de utilização do aplicativo.
+
+${textBold}   run <ImageType> [BuildNumber]${textNormal}
         Executa imagem do tipo indicado por ImageType. Caso não seja informado o
         BuildNumber, será executada a imagem mais recente.
         Argumentos:
@@ -85,6 +92,9 @@ ${TextNormal}
               Tipo de imagem:
                  app - Servidor de aplicação JBoss standalone
                  web - Servidor Apache HTTPD
+
+${textBold}   version${textNormal}
+        Exibe somente a versão deste aplicativo.
 
 _EOF_
 
@@ -95,88 +105,210 @@ _EOF_
 # @function    sigaBuild                                                       #
 # @description Builds Docker images and tags them.                             #
 #                                                                              #
-# @usage       sigaBuild <BuildType> [BuildDirectory]                          #
+# @usage       sigaBuild <buildType> [buildDirectory]                          #
 # @in          none                                                            #
 # @return      none                                                            #
 # @return-code                                                                 #
 #              none                                                            #
 # @exit-code                                                                   #
-#              255 - normal exit code                                          #
+#              0 - success                                                     #
 #------------------------------------------------------------------------------#
 sigaBuild ()
 {
-   local -a WebImages
-   local LastBuildNumber BuildType BuildDirectory
+   local -a arrayImages
+   local lastBuildNumber buildType buildDirectory
 
-   BuildType=$1
-   BuildDirectory=${BuildDirectoryDefault[${BuildType}]}
+   buildType=$1
+   buildDirectory=${buildDirectoryDefault[${buildType}]}
 
    if [ $# -eq 2 ]
    then
-      BuildDirectory=$2
+      buildDirectory=$2
    fi
 
-   if [ ! -r ${BuildDirectory}/Dockerfile ]
+   if [ ! -r ${buildDirectory}/Dockerfile ]
    then
-      echo "${TextBold}ERROR: File ${BuildDirectory}/Dockerfile doesn't exist or doesn't have read permission.${TextNormal}"
+      echo "${textBold}ERROR: File ${buildDirectory}/Dockerfile doesn't exist or doesn't have read permission.${textNormal}"
       return 1
    fi
 
    # Carrega array com imagens ordenadas do decrescentemente pelo build number.
    # Desta forma, o build mais recente sempre sera o que vira primeiro no array.
-   ArrayImages=($(docker images siga/${BuildType}server | awk '{if (NR != 1) if ($2 ~ /build-[0-9]*/) print $1":"$2}' | sort -r))
+   arrayImages=($(docker images siga/${buildType}server | awk '{if (NR != 1) if ($2 ~ /build-[0-9]*/) print $1":"$2}' | sort -r))
 
-   LastBuildNumber=$(cut -d'-' -f 2 <<< ${ArrayImages[0]})
-   NewBuildNumber=$(printf "%05d" $((LastBuildNumber + 1)))
+   lastBuildNumber=$(cut -d'-' -f 2 <<< ${ArrayImages[0]})
+   newBuildNumber=$(printf "%05d" $((lastBuildNumber + 1)))
 
-   echo "Last Build number is: ${TextBold}${LastBuildNumber}${TextNormal}"
-   echo "New Build number will be: ${TextBold}${NewBuildNumber}${TextNormal}"
+   echo "Last Build number is: ${textBold}${lastBuildNumber}${textNormal}"
+   echo "New Build number will be: ${textBold}${newBuildNumber}${textNormal}"
 
    echo "Building New Image! Please wait..."
-   docker build --tag=siga/${BuildType}server:build-${NewBuildNumber} --no-cache --force-rm ${BuildDirectory} 
+   docker build --tag=siga/${buildType}server:build-${newBuildNumber} --no-cache --force-rm ${buildDirectory} 
 
    if [ $? -eq 0 ]
    then
       echo
-      echo "${TextBold}Successfully built image siga/${BuildType}server:build-${NewBuildNumber}${TextNormal}!!!"
+      echo "${textBold}Successfully built image siga/${buildType}server:build-${newBuildNumber}${textNormal}!!!"
       echo 
-      docker tag siga/${BuildType}server:build-${NewBuildNumber} siga/${BuildType}server:latest
+      docker tag siga/${buildType}server:build-${newBuildNumber} siga/${buildType}server:latest
       if [ $? -eq 0 ]
       then
-         echo "${TextBold}Image siga/${BuildType}server:build-${NewBuildNumber} tagged as siga/${BuildType}server:latest${TextNormal}"
+         echo "${textBold}Image siga/${buildType}server:build-${newBuildNumber} tagged as siga/${buildType}server:latest${textNormal}"
          return 0
       fi
-      echo "WARNING: Couldn't tag image ${TextBold}siga/${BuildType}server:build-${NewBuildNumber}${TextNormal} as ${TextBold}siga/${BuildType}server:latest${TextNormal}"
+      echo "WARNING: Couldn't tag image ${textBold}siga/${buildType}server:build-${newBuildNumber}${textNormal} as ${textBold}siga/${buildType}server:latest${textNormal}"
       return 0
    fi
 
    return 2
 }
 
+#------------------------------------------------------------------------------#
+# @function    sigaRun                                                         #
+# @description Runs Docker images in detach (background) mode.                 #
+#                                                                              #
+# @usage       sigaRun <imageType> [buildNumber] [newEntrypoint]               #
+# @in          imageType - type of image to run                                #
+#              buildNumber - build number of image. Defaults to "latest"       #
+#              newEntrypoint - undocumented argument. Changes entrypoint of    #
+#                 image and run in interactive mode.                           #
+# @return      none                                                            #
+# @return-code Returns return-code from docker execution.                      #
+# @exit-code   none                                                            #
+#------------------------------------------------------------------------------#
 sigaRun()
 {
-   :
+   declare -a arrayImages
+   declare -A defaultPorts
+   local imageType buildNumber newEntrypoint tempPort exposeTCPPorts cmdToRun imageTag
+
+   # Load array of default TCP Ports to map
+   defaultPorts[app]=8080,8443,9990
+   defaultPorts[web]=80,443
+
+   [ $# -lt 1 -o $# -gt 3 ] && usage
+
+   imageType=$1
+   buildNumber=$2
+   newEntrypoint=$3
+
+   for tempPort in $(tr ',' ' ' <<< ${defaultPorts[${imageType}]})
+   do
+      exposeTCPPorts="${exposeTCPPorts} -p ${tempPort}:${tempPort}"
+   done
+
+   cmdToRun="docker run --name=\"siga-${imageType}server\" -h \"siga-${imageType}server\" ${exposeTCPPorts}"
+
+   if [ ${newEntrypoint} ]
+   then
+      cmdToRun="${cmdToRun} --entrypoint=\"${newEntrypoint}\" -it"
+   else
+      cmdToRun="${cmdToRun} -d"
+   fi
+
+   [ ${buildNumber} ] && imageTag="build-${buildNumber}"
+
+   case ${imageType} in
+      'app')
+         ${cmdToRun} siga/${imageType}server:${imageTag:-latest}
+         return $?
+         ;;
+
+      'web')
+         ${cmdToRun} --link=siga-appserver:siga-appserver siga/${imageType}server:${imageTag:-latest}
+         return $?
+         ;;
+      *)
+         usage
+         ;;
+   esac
 }
 
-sigaRemove()
+#------------------------------------------------------------------------------#
+# @function    sigaRemoveContainer                                             #
+# @description Removes a Docker stopped container.                             #
+#                                                                              #
+# @usage       sigaRemoveContainer                                             #
+# @in          none                                                            #
+# @return      none                                                            #
+# @return-code                                                                 #
+#              none                                                            #
+# @exit-code                                                                   #
+#              none                                                            #
+#------------------------------------------------------------------------------#
+sigaRemoveContainer()
+{
+   declare -a arrayContainers
+
+   arrayContainers=($(docker ps -a | sed -n '1!p' ))
+}
+
+#------------------------------------------------------------------------------#
+# @function    sigaRemoveImage                                                 #
+# @description Builds Docker images and tags them.                             #
+#                                                                              #
+# @usage       sigaRemoveImage <buildType> [buildDirectory]                    #
+# @in          none                                                            #
+# @return      none                                                            #
+# @return-code                                                                 #
+#              none                                                            #
+# @exit-code                                                                   #
+#              none                                                            #
+#------------------------------------------------------------------------------#
+sigaRemoveImage()
 {
    :
 }
 #---------------------------     MAIN SECTION     -----------------------------#
+
+if [ $# -eq 0 ]
+then
+   usage
+fi
+
+# Efetua parsing inicial dos comandos passados via prompt
+case $1 in
+   'build')
+      shift
+      sigaBuild $@
+      exit $?
+      ;;
+   'rm')
+      shift
+      sigaRemoveContainer $@
+      exit $?
+      ;;
+   'rmi')
+      shift
+      sigaRemoveImage $@
+      exit $?
+      ;;
+   'run')
+      shift
+      sigaRun $@
+      exit $?
+      ;;
+   'help')
+      usage
+      ;;
+   'version')
+      echo
+      echo "${myName} v${myVersion}"
+      echo
+      exit 255
+      ;;
+   *)
+      usage
+      ;;
+esac
+
+exit 0
+
+
 # Executa conteiners em segundo plano
-alias siga-run-webserver-background="docker run -d --name=\"siga-webserver\" -h \"siga-webserver\" -p 80:80 -p 443:443 --link=siga-appserver:siga-appserver -it -m 256m siga/webserver:latest"
-alias siga-run-webserver-foreground="docker run -rm --name=\"siga-webserver\" -h \"siga-webserver\" -p 80:80 -p 443:443 --link=siga-appserver:siga-appserver -it -m 256m siga/webserver:latest"
-
-alias siga-run-webserver-bash="docker run --rm --name=\"siga-webserver\" -h \"siga-webserver\" -p 80:80 -p 443:443 --link=siga-appserver:siga-appserver -it -m 256m siga/webserver:latest /bin/bash"
-
-alias siga-run-appserver-background="docker run -d --name=\"siga-appserver\" -h \"siga-appserver\" -p 8080:8080 -p 8443:8443 -p 9990:9990 siga/appserver:latest"
-alias siga-run-appserver-foreground="docker run --rm --name=\"siga-appserver\" -h \"siga-appserver\" -p 8080:8080 -p 8443:8443 -p 9990:9990 siga/appserver:latest"
-alias siga-run-appserver-bash="docker run -it --rm --name=\"siga-appserver\" -h \"siga-appserver\" -p 8080:8080 -p 8443:8443 -p 9990:9990 --entrypoint=\"/bin/bash\" siga/appserver:latest"
-
-alias siga-run-appserver-admin="docker run -it --rm --name=\"siga-appserver\" -h \"siga-appserver\" -p 8080:8080 -p 8443:8443 -p 9990:9990 siga/appserver:latest /bin/bash"
-
-alias siga-rmi-webserver="docker rmi siga:webserver"
-alias siga-rmi-appserver="docker rmi siga/appserver:latest && docker rmi 10.34.15.71:5000/centos-jboss-02"
+#
+#alias siga-rmi-webserver="docker rmi siga:webserver"
+#alias siga-rmi-appserver="docker rmi siga/appserver:latest && docker rmi 10.34.15.71:5000/centos-jboss-02"
 
 
 ################################################################################

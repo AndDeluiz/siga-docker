@@ -27,10 +27,21 @@ OSName=$(uname -s)
 myVersion=$(awk '/^# @version/ {print $3}' ${myName})
 myHostname=$(hostname)
 
-# Cria array associativo com diretorios padrao de localizacao de Dockerfile
+# Load array of default Dockerfile directories
 declare -A buildDirectoryDefault
 buildDirectoryDefault[app]=/opt/docker/build/siga-appserver-standalone
 buildDirectoryDefault[web]=/opt/docker/build/siga-webserver-standalone
+
+# Load array of default volumes to attach do running containers
+# Multiple volumes in an entry must be separated by a space character.
+# eg.: array[entry]="/vol1:/vol1:ro /vol2:vol2:rw"
+declare -A volumesToMount
+volumesToMount[app]="/var/log/jboss/sigadoc:/var/log/jboss/sigadoc:rw"
+
+# Load array of default TCP Ports to map on runnning images
+declare -A defaultPorts
+defaultPorts[app]=8080,8443,9990
+defaultPorts[web]=80,443
 
 # Text output modifiers
 textBold=$(tput bold)
@@ -72,6 +83,13 @@ ${textBold}   build <buildType> [buildDirectory]${textNormal}
                  web - Servidor Apache HTTPD
            buildDirectory - diretório onde está localizado o arquivo Dockerfile.
 
+${textBold}   help${textNormal}
+        Exibe esta mensagem de utilização do aplicativo.
+
+${textBold}   rm${textNormal}
+        Remove contêineres do sistema. Caso o contêiner esteja em execução,
+        força a parada do contêiner antes de removê-lo.
+
 ${textBold}   rmi <ImageType> [BuildNumber]${textNormal}
         Remove imagem do tipo indicado por ImageType. Caso não seja informado o
         BuildNumber, serão mostradas todas as imagens disponíveis para escolha.
@@ -80,9 +98,8 @@ ${textBold}   rmi <ImageType> [BuildNumber]${textNormal}
               Tipo de imagem:
                  app - Servidor de aplicação JBoss standalone
                  web - Servidor Apache HTTPD
-
-${textBold}   help${textNormal}
-        Exibe esta mensagem de utilização do aplicativo.
+           BuildNumber - número de BUILD da imagem que será removida.
+                 Default: latest
 
 ${textBold}   run <ImageType> [BuildNumber]${textNormal}
         Executa imagem do tipo indicado por ImageType. Caso não seja informado o
@@ -92,6 +109,8 @@ ${textBold}   run <ImageType> [BuildNumber]${textNormal}
               Tipo de imagem:
                  app - Servidor de aplicação JBoss standalone
                  web - Servidor Apache HTTPD
+           BuildNumber - número de BUILD da imagem que será executada.
+                 Default: latest
 
 ${textBold}   version${textNormal}
         Exibe somente a versão deste aplicativo.
@@ -118,13 +137,19 @@ sigaBuild ()
    local -a arrayImages
    local lastBuildNumber buildType buildDirectory
 
-   buildType=$1
-   buildDirectory=${buildDirectoryDefault[${buildType}]}
-
-   if [ $# -eq 2 ]
-   then
-      buildDirectory=$2
-   fi
+   case $# in
+      1)
+         buildType=$1
+         buildDirectory=${buildDirectoryDefault[${buildType}]}
+         ;;
+      2)
+         buildType=$1
+         buildDirectory=$2
+         ;;
+      *)
+         usage
+         ;;
+   esac
 
    if [ ! -r ${buildDirectory}/Dockerfile ]
    then
@@ -136,15 +161,14 @@ sigaBuild ()
    # Desta forma, o build mais recente sempre sera o que vira primeiro no array.
    arrayImages=($(docker images siga/${buildType}server | awk '{if (NR != 1) if ($2 ~ /build-[0-9]*/) print $1":"$2}' | sort -r))
 
-   lastBuildNumber=$(cut -d'-' -f 2 <<< ${ArrayImages[0]})
+   lastBuildNumber=$(cut -d'-' -f 2 <<< ${arrayImages[0]})
    newBuildNumber=$(printf "%05d" $((lastBuildNumber + 1)))
 
    echo "Last Build number is: ${textBold}${lastBuildNumber}${textNormal}"
    echo "New Build number will be: ${textBold}${newBuildNumber}${textNormal}"
 
    echo "Building New Image! Please wait..."
-   docker build --tag=siga/${buildType}server:build-${newBuildNumber} --no-cache --force-rm ${buildDirectory} 
-
+   docker build --tag=siga/${buildType}server:build-${newBuildNumber} --no-cache --force-rm ${buildDirectory}
    if [ $? -eq 0 ]
    then
       echo
@@ -179,12 +203,7 @@ sigaBuild ()
 sigaRun()
 {
    declare -a arrayImages
-   declare -A defaultPorts
-   local imageType buildNumber newEntrypoint tempPort exposeTCPPorts cmdToRun imageTag
-
-   # Load array of default TCP Ports to map
-   defaultPorts[app]=8080,8443,9990
-   defaultPorts[web]=80,443
+   local imageType buildNumber newEntrypoint tempPort tempVolume exposeTCPPorts cmdToRun imageTag attachVol
 
    [ $# -lt 1 -o $# -gt 3 ] && usage
 
@@ -197,7 +216,12 @@ sigaRun()
       exposeTCPPorts="${exposeTCPPorts} -p ${tempPort}:${tempPort}"
    done
 
-   cmdToRun="docker run --name=\"siga-${imageType}server\" -h \"siga-${imageType}server\" ${exposeTCPPorts}"
+   for tempVolume in ${volumesToMount[${imageType}]}
+   do
+      attachVol="${attachVol} -v ${tempVolume}"
+   done
+
+   cmdToRun="docker run --name=\"siga-${imageType}server\" -h \"siga-${imageType}server\" ${exposeTCPPorts} ${attachVol}"
 
    if [ ${newEntrypoint} ]
    then
@@ -206,7 +230,15 @@ sigaRun()
       cmdToRun="${cmdToRun} -d"
    fi
 
-   [ ${buildNumber} ] && imageTag="build-${buildNumber}"
+   if [ ${buildNumber} ]
+   then
+      if [ ${buildNumber} = "latest" ]
+      then
+         imageTag="${buildNumber}"
+      else
+         imageTag="build-${buildNumber}"
+      fi
+   fi
 
    case ${imageType} in
       'app')
@@ -226,7 +258,7 @@ sigaRun()
 
 #------------------------------------------------------------------------------#
 # @function    sigaRemoveContainer                                             #
-# @description Removes a Docker stopped container.                             #
+# @description Removes a Docker container.                                     #
 #                                                                              #
 # @usage       sigaRemoveContainer                                             #
 # @in          none                                                            #
@@ -238,9 +270,56 @@ sigaRun()
 #------------------------------------------------------------------------------#
 sigaRemoveContainer()
 {
-   declare -a arrayContainers
+   declare -a containerId
+   local arrayIndex returnCode highRetCode
 
-   arrayContainers=($(docker ps -a | sed -n '1!p' ))
+   highRetCode=0
+
+   echo
+   echo "${textBold}CONTÊINERES REGISTRADOS NO SISTEMA"
+   echo "==================================${textNormal}"
+   echo
+   docker ps -a
+   echo
+   read -a containerId -t 300 -p "${textBold}Digite o(s) CONTAINER(S) ID(S) que deseja remover (Q = Quit):${textNormal} "
+
+   if [ ${#containerId[@]} -eq 0 ]
+   then
+      echo
+      echo "${textBold}Não foram informados contêineres Docker para exibição remoção!${textNormal}"
+      echo
+      return 0
+   fi
+
+   if [ ${containerId[0]} = "Q" -o ${containerId[0]} = "q" ]
+   then
+      echo
+      echo "${textBold}Saída requisitada pelo usuário.${textNormal}"
+      echo
+      return 0
+   fi
+
+   for ((arrayIndex=0; arrayIndex < ${#containerId[@]}; arrayIndex++))
+   do
+      echo
+      if docker ps -aq | grep "^${containerId[${arrayIndex}]}" > /dev/null 2>&1
+      then
+         docker rm --force ${containerId[${arrayIndex}]} > /dev/null
+         returnCode=$?
+         if [ ${returnCode} -eq 0 ]
+         then
+            echo "Contêiner ${containerId[${arrayIndex}]} removido com sucesso!"
+         else
+            echo "${textBold}ERRO: Contêiner ${containerId[${arrayIndex}]} não pôde ser removido.${textNormal}"
+         fi
+         [ ${highRetCode} -lt ${returnCode} ] && highRetCode=${returnCode}
+      else
+         echo "${textBold}ERRO: Contêiner com ID=${containerId[${arrayIndex}]} inexistente!${textNormal}"
+      fi
+      echo
+      return $?
+   done
+
 }
 
 #------------------------------------------------------------------------------#

@@ -27,6 +27,9 @@ OSName=$(uname -s)
 myVersion=$(awk '/^# @version/ {print $3}' ${myName})
 myHostname=$(hostname)
 
+# Define start order of containers for SIGA enviroment
+startOrder="app web"
+
 # Load array of default Dockerfile directories
 declare -A buildDirectoryDefault
 buildDirectoryDefault[app]=/opt/docker/build/siga-appserver-standalone
@@ -40,7 +43,7 @@ volumesToMount[app]="/var/log/jboss/sigadoc:/var/log/jboss/sigadoc:rw"
 
 # Load array of default TCP Ports to map on runnning images
 declare -A defaultPorts
-defaultPorts[app]=8080,8443,9990
+defaultPorts[app]=8080,8443,9990,9999
 defaultPorts[web]=80,443
 
 # Text output modifiers
@@ -86,6 +89,13 @@ ${textBold}   build <buildType> [buildDirectory]${textNormal}
 ${textBold}   help${textNormal}
         Exibe esta mensagem de utilização do aplicativo.
 
+${textBold}   logs${textNormal}
+	Mostra os logs de um contêiner (stdout).
+
+${textBold}   restart${textNormal}
+	Reinicia o ambiente Siga Docker, parando e iniciando automaticamente os
+	contêineres de aplicação e servidor web na ordem correta.
+
 ${textBold}   rm${textNormal}
         Remove contêineres do sistema. Caso o contêiner esteja em execução,
         força a parada do contêiner antes de removê-lo.
@@ -99,7 +109,6 @@ ${textBold}   rmi <ImageType> [BuildNumber]${textNormal}
                  app - Servidor de aplicação JBoss standalone
                  web - Servidor Apache HTTPD
            BuildNumber - número de BUILD da imagem que será removida.
-                 Default: latest
 
 ${textBold}   run <ImageType> [BuildNumber]${textNormal}
         Executa imagem do tipo indicado por ImageType. Caso não seja informado o
@@ -110,7 +119,15 @@ ${textBold}   run <ImageType> [BuildNumber]${textNormal}
                  app - Servidor de aplicação JBoss standalone
                  web - Servidor Apache HTTPD
            BuildNumber - número de BUILD da imagem que será executada.
-                 Default: latest
+	      Default: latest
+
+${textBold}   start${textNormal}
+	Inicia o ambiente Siga Docker, iniciando automaticamente os contêineres
+	de aplicação e servidor web na ordem correta.
+
+${textBold}   stop${textNormal}
+	Para o ambiente Siga Docker, terminando automaticamente os contêineres
+	de aplicação e servidor web na ordem correta.
 
 ${textBold}   version${textNormal}
         Exibe somente a versão deste aplicativo.
@@ -240,6 +257,7 @@ sigaRun()
       fi
    fi
 
+#TODO Remover este case e formatar linha com --link em cmdToRun
    case ${imageType} in
       'app')
          ${cmdToRun} siga/${imageType}server:${imageTag:-latest}
@@ -286,7 +304,7 @@ sigaRemoveContainer()
    if [ ${#containerId[@]} -eq 0 ]
    then
       echo
-      echo "${textBold}Não foram informados contêineres Docker para exibição remoção!${textNormal}"
+      echo "${textBold}Não foram informados contêineres Docker para remoção!${textNormal}"
       echo
       return 0
    fi
@@ -324,9 +342,9 @@ sigaRemoveContainer()
 
 #------------------------------------------------------------------------------#
 # @function    sigaRemoveImage                                                 #
-# @description Builds Docker images and tags them.                             #
+# @description Removes an image from Docker local repository.                  #
 #                                                                              #
-# @usage       sigaRemoveImage <buildType> [buildDirectory]                    #
+# @usage       sigaRemoveImage <imageType> [buildNumber]                       #
 # @in          none                                                            #
 # @return      none                                                            #
 # @return-code                                                                 #
@@ -336,7 +354,142 @@ sigaRemoveContainer()
 #------------------------------------------------------------------------------#
 sigaRemoveImage()
 {
-   :
+   local buildNumber imageTag imageType returnCode
+
+   case $# in
+      1)
+         imageType=$1
+	 ;;
+      2)
+         imageType=$1
+      	 buildNumber=$2
+         if [ ${buildNumber} = "latest" ]
+         then
+            imageTag="${buildNumber}"
+         else
+            imageTag="build-${buildNumber}"
+         fi
+         ;;
+      *)
+         usage
+	 ;;
+   esac
+
+   if [ ! ${imageTag} ]
+   then
+      echo
+      echo "${textBold}IMAGENS REGISTRADAS NO SISTEMA LOCAL${textNormal} "
+      echo "${textBold}====================================${textNormal} "
+      echo
+      docker images siga/${imageType}server
+      echo
+      read -a imageTag -t 300 -p "${textBold}Digite o TAG ou ID da(s) imagem(ns) que deseja remover (Q = Quit):${textNormal} "
+      if [ ! ${imageTag} ]
+      then
+         echo "${textBold}ERRO: Nenhuma imagem informada pelo usuário!${textNormal}"
+         return 255
+      fi
+      case ${imageTag} in
+         "Q"|"q")
+	    echo
+	    echo "${textBold}Saída requisitada pelo usuário.${textNormal}"
+	    echo
+	    return 254
+	    ;;
+      esac
+   fi
+
+   if docker images siga/webserver | egrep "siga/${imageType}server[[:space:]]+${imageTag}" > /dev/null 2>&1
+   then
+      docker rmi siga/${imageType}server:${imageTag}
+      returnCode=$?
+      if [ ${returnCode} -eq 0 ]
+      then
+         echo "Imagem siga/${imageType}server:${imageTag} removida com sucesso!"
+	 return ${returnCode}
+      else
+         echo "${textBold}ERRO: Imagem siga/${imageType}server:${imageTag} não pôde ser removida.${textNormal}"
+	 return ${returnCode}
+      fi
+   else
+      echo
+      echo "${textBold}ERRO: Imagem siga/${imageType}server:${imageTag} não pôde ser encontrada no sistema.${textNormal}"
+      return 253
+   fi
+}
+
+sigaStart()
+{
+   local imageType returnCode
+
+   for imageType in ${startOrder}
+   do
+      echo
+      echo "${textBold}Iniciando ambiente SIGA $(tr '[a-z]' '[A-Z]' <<< ${imageType})..."
+      sigaRun ${imageType}
+      returnCode=$?
+      [ ${returnCode} -ne 0 ] && return ${returnCode}
+   done
+
+   return 0
+}
+
+sigaStop()
+{
+   local imageType returnCode
+
+   for imageType in ${startOrder}
+   do
+      echo "${textBold}Parando ambiente SIGA $(tr '[a-z]' '[A-Z]' <<< ${imageType})..."
+      docker rm --force $(docker ps | awk '/siga-'${imageType}'server[[:space:]]*$/ {print $1}')
+   done
+}
+
+sigaLogs()
+{
+   local containerId returnCode realTimeLog
+
+   highRetCode=0
+
+   echo
+   echo "${textBold}CONTÊINERES EM EXECUÇÃO NO SISTEMA"
+   echo "==================================${textNormal}"
+   echo
+   docker ps
+   echo
+   read -t 300 -p "${textBold}Digite o CONTAINER ID que deseja exibir os logs (Q = Quit):${textNormal} " containerId
+
+   if [ ! ${containerId} ]
+   then
+      echo
+      echo "${textBold}Não foram informados contêineres Docker para exibição!${textNormal}"
+      echo
+      return 0
+   fi
+
+   if [ ${containerId} = "Q" -o ${containerId} = "q" ]
+   then
+      echo
+      echo "${textBold}Saída requisitada pelo usuário.${textNormal}"
+      echo
+      return 0
+   fi
+
+   if docker ps -q | grep "^${containerId}" > /dev/null 2>&1
+   then
+      read -p "Deseja acompanhar os logs em tempo real (s/N)? " realTimeLog
+      case ${realTimeLog} in
+         "S"|"s")
+	    docker logs --follow ${containerId}
+	    return $?
+	    ;;
+         *)
+	    docker logs ${containerId}
+	    return $?
+	    ;;
+      esac
+   fi
+   
 }
 #---------------------------     MAIN SECTION     -----------------------------#
 
@@ -352,6 +505,17 @@ case $1 in
       sigaBuild $@
       exit $?
       ;;
+   'logs')
+      shift
+      sigaLogs $@
+      exit $?
+      ;;
+   'restart')
+      shift
+      sigaStop $@
+      [ $? -eq 0 ] && sigaStart $@
+      exit $?
+      ;;
    'rm')
       shift
       sigaRemoveContainer $@
@@ -365,6 +529,16 @@ case $1 in
    'run')
       shift
       sigaRun $@
+      exit $?
+      ;;
+   'start')
+      shift
+      sigaStart $@
+      exit $?
+      ;;
+   'stop')
+      shift
+      sigaStop $@
       exit $?
       ;;
    'help')
@@ -389,13 +563,6 @@ exit 0
 #alias siga-rmi-webserver="docker rmi siga:webserver"
 #alias siga-rmi-appserver="docker rmi siga/appserver:latest && docker rmi 10.34.15.71:5000/centos-jboss-02"
 
-
-################################################################################
-# Iniciar aplicacao Siga no conteiner
-#
-# mkdir -p /var/log/jboss/sigadoc \
-#    && cd /opt/jboss/bin \
-#    && ./standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0 -Djboss.home.dir=/opt/jboss -Djboss.server.base.dir=/opt/jboss/sigadoc/ -Djboss.server.log.dir=/var/log/jboss -Djboss.socket.binding.port-offset=0
 
 ################################################################################
 # Para "attachar" a um conteiner em execucao e sair sem para o conteiner:

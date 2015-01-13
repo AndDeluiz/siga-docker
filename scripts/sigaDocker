@@ -13,38 +13,21 @@
 #                                                                              #
 ################################################################################
 
-#---------------------------        INCLUDE       -----------------------------#
-
 #---------------------------     DEBUG OPTIONS    -----------------------------#
 # uncomment line(s) to activate debug function
 # set -x    # print a trace of simple commands and their arguments
 # set -v    # print shell input lines as they are read
 # set -n    # read commands but do not execute them
 
+#---------------------------        INCLUDE       -----------------------------#
+. $(basename $0).conf
+
 #---------------------------   GLOBAL VARIABLES   -----------------------------#
 myName=$(basename $0)
 OSName=$(uname -s)
 myVersion=$(awk '/^# @version/ {print $3}' ${myName})
 myHostname=$(hostname)
-
-# Define start order of containers for SIGA enviroment
-startOrder="app web"
-
-# Load array of default Dockerfile directories
-declare -A buildDirectoryDefault
-buildDirectoryDefault[app]=/opt/docker/build/siga-appserver-standalone
-buildDirectoryDefault[web]=/opt/docker/build/siga-webserver-standalone
-
-# Load array of default volumes to attach do running containers
-# Multiple volumes in an entry must be separated by a space character.
-# eg.: array[entry]="/vol1:/vol1:ro /vol2:vol2:rw"
-declare -A volumesToMount
-volumesToMount[app]="/var/log/jboss/sigadoc:/var/log/jboss/sigadoc:rw"
-
-# Load array of default TCP Ports to map on runnning images
-declare -A defaultPorts
-defaultPorts[app]=8080,8443,9990,9999
-defaultPorts[web]=80,443
+myTempFile=$(mktemp --tmpdir=/tmp ${myName}.XXXXXXXXXXXX)
 
 # Text output modifiers
 textBold=$(tput bold)
@@ -134,6 +117,7 @@ ${textBold}   version${textNormal}
 
 _EOF_
 
+   rm -f ${myTempFile}
    exit 255
 }
 
@@ -145,9 +129,11 @@ _EOF_
 # @in          none                                                            #
 # @return      none                                                            #
 # @return-code                                                                 #
-#              none                                                            #
-# @exit-code                                                                   #
 #              0 - success                                                     #
+#              1 - Dockerfile file doesn't exist                               #
+#              2 - Image build unsuccessful                                    #
+# @exit-code                                                                   #
+#              none                                                            #
 #------------------------------------------------------------------------------#
 sigaBuild ()
 {
@@ -179,7 +165,7 @@ sigaBuild ()
    arrayImages=($(docker images siga/${buildType}server | awk '{if (NR != 1) if ($2 ~ /build-[0-9]*/) print $1":"$2}' | sort -r))
 
    lastBuildNumber=$(cut -d'-' -f 2 <<< ${arrayImages[0]})
-   newBuildNumber=$(printf "%05d" $((lastBuildNumber + 1)))
+   newBuildNumber=$(printf "%05d" $((10#${lastBuildNumber} + 1)))
 
    echo "Last Build number is: ${textBold}${lastBuildNumber}${textNormal}"
    echo "New Build number will be: ${textBold}${newBuildNumber}${textNormal}"
@@ -220,7 +206,7 @@ sigaBuild ()
 sigaRun()
 {
    declare -a arrayImages
-   local imageType buildNumber newEntrypoint tempPort tempVolume exposeTCPPorts cmdToRun imageTag attachVol
+   local imageType buildNumber newEntrypoint tempVar linkContainer exposeTCPPorts cmdToRun imageTag attachVol
 
    [ $# -lt 1 -o $# -gt 3 ] && usage
 
@@ -228,17 +214,22 @@ sigaRun()
    buildNumber=$2
    newEntrypoint=$3
 
-   for tempPort in $(tr ',' ' ' <<< ${defaultPorts[${imageType}]})
+   for tempVar in $(tr ',' ' ' <<< ${defaultPorts[${imageType}]})
    do
-      exposeTCPPorts="${exposeTCPPorts} -p ${tempPort}:${tempPort}"
+      exposeTCPPorts="${exposeTCPPorts} -p ${tempVar}:${tempVar}"
    done
 
-   for tempVolume in ${volumesToMount[${imageType}]}
+   for tempVar in ${volumesToMount[${imageType}]}
    do
-      attachVol="${attachVol} -v ${tempVolume}"
+      attachVol="${attachVol} -v ${tempVar}"
    done
 
-   cmdToRun="docker run --name=\"siga-${imageType}server\" -h \"siga-${imageType}server\" ${exposeTCPPorts} ${attachVol}"
+   for tempVar in ${volumesToMount[${imageType}]}
+   do
+      linkContainer="${linkContainer} --link=${linkContainer}"
+   done
+
+   cmdToRun="docker run --name=\"siga-${imageType}server\" -h siga-${imageType}server ${exposeTCPPorts} ${attachVol}"
 
    if [ ${newEntrypoint} ]
    then
@@ -257,21 +248,8 @@ sigaRun()
       fi
    fi
 
-#TODO Remover este case e formatar linha com --link em cmdToRun
-   case ${imageType} in
-      'app')
-         ${cmdToRun} siga/${imageType}server:${imageTag:-latest}
-         return $?
-         ;;
-
-      'web')
-         ${cmdToRun} --link=siga-appserver:siga-appserver siga/${imageType}server:${imageTag:-latest}
-         return $?
-         ;;
-      *)
-         usage
-         ;;
-   esac
+   ${cmdToRun} ${linkContainer} siga/${imageType}server:${imageTag:-latest} > ${myTempFile} 2>&1
+   return $?
 }
 
 #------------------------------------------------------------------------------#
@@ -282,7 +260,8 @@ sigaRun()
 # @in          none                                                            #
 # @return      none                                                            #
 # @return-code                                                                 #
-#              none                                                            #
+#              0 - Success                                                     #
+#              * - exit-code from "docker rm" execution                        #
 # @exit-code                                                                   #
 #              none                                                            #
 #------------------------------------------------------------------------------#
@@ -334,8 +313,7 @@ sigaRemoveContainer()
       else
          echo "${textBold}ERRO: Contêiner com ID=${containerId[${arrayIndex}]} inexistente!${textNormal}"
       fi
-      echo
-      return $?
+      return ${highRetCode}
    done
 
 }
@@ -348,7 +326,10 @@ sigaRemoveContainer()
 # @in          none                                                            #
 # @return      none                                                            #
 # @return-code                                                                 #
-#              none                                                            #
+#               0  - Success                                                   #
+#              253 - image name not found in local system                      #
+#              254 - exit by user request                                      #
+#              255 - no image name read from stdin                             #
 # @exit-code                                                                   #
 #              none                                                            #
 #------------------------------------------------------------------------------#
@@ -418,6 +399,21 @@ sigaRemoveImage()
    fi
 }
 
+#------------------------------------------------------------------------------#
+# @function    sigaStart                                                       #
+# @description Start SIGA environments marked for automatic start.             #
+#                                                                              #
+# @usage       sigaStart                                                       #
+# @in          none                                                            #
+# @return      none                                                            #
+# @return-code                                                                 #
+#               0  - Success                                                   #
+#              253 - image name not found in local system                      #
+#              254 - exit by user request                                      #
+#              255 - no image name read from stdin                             #
+# @exit-code                                                                   #
+#              none                                                            #
+#------------------------------------------------------------------------------#
 sigaStart()
 {
    local imageType returnCode
@@ -425,26 +421,78 @@ sigaStart()
    for imageType in ${startOrder}
    do
       echo
-      echo "${textBold}Iniciando ambiente SIGA $(tr '[a-z]' '[A-Z]' <<< ${imageType})..."
-      sigaRun ${imageType}
-      returnCode=$?
-      [ ${returnCode} -ne 0 ] && return ${returnCode}
+      echo -n "${textBold}Iniciando ambiente SIGA $(tr '[a-z]' '[A-Z]' <<< ${imageType})...${textNormal}"
+      if docker ps -a | awk '/siga-'${imageType}'server[[:space:]]*$/ {print $1}'
+      then
+         docker start $(docker ps -a | awk '/siga-'${imageType}'server[[:space:]]*$/ {print $1}') > ${myTempFile} 2>&1
+         returnCode=$?
+      else
+         sigaRun ${imageType}
+         returnCode=$?
+      fi
+
+      if [ ${returnCode} -eq 0 ]
+      then
+         echo "${textBold}OK${textNormal}"
+      else
+         echo "${textBold}FALHA${textNormal}"
+         echo "${textBold}Verifique erro abaixo:${textNormal}"
+         cat ${myTempFile}
+      fi
    done
 
    return 0
 }
 
+#------------------------------------------------------------------------------#
+# @function    sigaStop                                                        #
+# @description Stop SIGA environments marked for automatic start in startOrder #
+#              variable.                                                       #
+#                                                                              #
+# @usage       sigaStop                                                        #
+# @in          none                                                            #
+# @return      none                                                            #
+# @return-code                                                                 #
+#               0  - Success                                                   #
+#              253 - image name not found in local system                      #
+#              254 - exit by user request                                      #
+#              255 - no image name read from stdin                             #
+# @exit-code                                                                   #
+#              none                                                            #
+#------------------------------------------------------------------------------#
 sigaStop()
 {
    local imageType returnCode
 
    for imageType in ${startOrder}
    do
-      echo "${textBold}Parando ambiente SIGA $(tr '[a-z]' '[A-Z]' <<< ${imageType})..."
-      docker rm --force $(docker ps | awk '/siga-'${imageType}'server[[:space:]]*$/ {print $1}')
+      echo -n "${textBold}Parando ambiente SIGA $(tr '[a-z]' '[A-Z]' <<< ${imageType})...${textNormal}"
+      docker stop --time=30 $(docker ps | awk '/siga-'${imageType}'server[[:space:]]*$/ {print $1}') > ${myTempFile} 2>&1
+      returnCode=$?
+      if [ ${returnCode} -eq 0 ]
+      then
+         echo "${textBold}OK${textNormal}"
+      else
+         echo "${textBold}FALHA${textNormal}"
+	 echo "${textBold}Verifique erro abaixo:${textNormal}"
+	 cat ${myTempFile}
+      fi
    done
 }
 
+#------------------------------------------------------------------------------#
+# @function    sigaLogs                                                        #
+# @description Show logs for a running container.                              #
+#                                                                              #
+# @usage       sigaLogs                                                        #
+# @in          none                                                            #
+# @return      none                                                            #
+# @return-code                                                                 #
+#              0 - Success                                                     #
+#              * - exit from docker command                                    #
+# @exit-code                                                                   #
+#              none                                                            #
+#------------------------------------------------------------------------------#
 sigaLogs()
 {
    local containerId returnCode realTimeLog
@@ -503,42 +551,50 @@ case $1 in
    'build')
       shift
       sigaBuild $@
+      rm -f ${myTempFile}
       exit $?
       ;;
    'logs')
       shift
       sigaLogs $@
+      rm -f ${myTempFile}
       exit $?
       ;;
    'restart')
       shift
       sigaStop $@
       [ $? -eq 0 ] && sigaStart $@
+      rm -f ${myTempFile}
       exit $?
       ;;
    'rm')
       shift
       sigaRemoveContainer $@
+      rm -f ${myTempFile}
       exit $?
       ;;
    'rmi')
       shift
       sigaRemoveImage $@
+      rm -f ${myTempFile}
       exit $?
       ;;
    'run')
       shift
       sigaRun $@
+      rm -f ${myTempFile}
       exit $?
       ;;
    'start')
       shift
       sigaStart $@
+      rm -f ${myTempFile}
       exit $?
       ;;
    'stop')
       shift
       sigaStop $@
+      rm -f ${myTempFile}
       exit $?
       ;;
    'help')
@@ -548,6 +604,7 @@ case $1 in
       echo
       echo "${myName} v${myVersion}"
       echo
+      rm -f ${myTempFile}
       exit 255
       ;;
    *)
@@ -555,13 +612,9 @@ case $1 in
       ;;
 esac
 
+rm -f ${myTempFile}
 exit 0
 
-
-# Executa conteiners em segundo plano
-#
-#alias siga-rmi-webserver="docker rmi siga:webserver"
-#alias siga-rmi-appserver="docker rmi siga/appserver:latest && docker rmi 10.34.15.71:5000/centos-jboss-02"
 
 
 ################################################################################

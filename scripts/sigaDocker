@@ -20,12 +20,12 @@
 # set -n    # read commands but do not execute them
 
 #---------------------------        INCLUDE       -----------------------------#
-. $(basename $0).conf
+. $0.conf
 
 #---------------------------   GLOBAL VARIABLES   -----------------------------#
 myName=$(basename $0)
 OSName=$(uname -s)
-myVersion=$(awk '/^# @version/ {print $3}' ${myName})
+myVersion=$(awk '/^# @version/ {print $3}' $0)
 myHostname=$(hostname)
 myTempFile=$(mktemp --tmpdir=/tmp ${myName}.XXXXXXXXXXXX)
 
@@ -107,6 +107,9 @@ ${textBold}   run <ImageType> [BuildNumber]${textNormal}
 ${textBold}   start${textNormal}
 	Inicia o ambiente Siga Docker, iniciando automaticamente os contêineres
 	de aplicação e servidor web na ordem correta.
+	Se existir no sistema algum contêiner registrado para qualquer um dos
+	ambientes válidos e, estando este contêiner parado, ele será iniciado.
+	Caso contrário, um novo contêiner será criado.
 
 ${textBold}   stop${textNormal}
 	Para o ambiente Siga Docker, terminando automaticamente os contêineres
@@ -313,9 +316,9 @@ sigaRemoveContainer()
       else
          echo "${textBold}ERRO: Contêiner com ID=${containerId[${arrayIndex}]} inexistente!${textNormal}"
       fi
-      return ${highRetCode}
    done
 
+   return ${highRetCode}
 }
 
 #------------------------------------------------------------------------------#
@@ -407,25 +410,33 @@ sigaRemoveImage()
 # @in          none                                                            #
 # @return      none                                                            #
 # @return-code                                                                 #
-#               0  - Success                                                   #
-#              253 - image name not found in local system                      #
-#              254 - exit by user request                                      #
-#              255 - no image name read from stdin                             #
+#              0 - Success                                                     #
+#              * - image name not found in local system                        #
 # @exit-code                                                                   #
 #              none                                                            #
 #------------------------------------------------------------------------------#
 sigaStart()
 {
-   local imageType returnCode
+   local imageType returnCode containerId runningState
 
    for imageType in ${startOrder}
    do
       echo
       echo -n "${textBold}Iniciando ambiente SIGA $(tr '[a-z]' '[A-Z]' <<< ${imageType})...${textNormal}"
-      if docker ps -a | awk '/siga-'${imageType}'server[[:space:]]*$/ {print $1}'
+      containerId=$(docker ps -a | awk '/siga-'${imageType}'server[[:space:]]*$/ {print $1}')
+      if [ ${containerId} ]
       then
-         docker start $(docker ps -a | awk '/siga-'${imageType}'server[[:space:]]*$/ {print $1}') > ${myTempFile} 2>&1
-         returnCode=$?
+         runningState=$(docker inspect --format='{{.State.Running}}' ${containerId})
+         if ! ${runningState}
+	 then
+            docker start ${containerId} > ${myTempFile} 2>&1
+            returnCode=$?
+	 else
+	    echo
+	    echo
+	    echo "${textBold}Ambiente SIGA $(tr '[a-z]' '[A-Z]' <<< ${imageType}) já em execução com ContainerId=${containerId}${textNormal}"
+	    continue
+	 fi
       else
          sigaRun ${imageType}
          returnCode=$?
@@ -614,17 +625,3 @@ esac
 
 rm -f ${myTempFile}
 exit 0
-
-
-
-################################################################################
-# Para "attachar" a um conteiner em execucao e sair sem para o conteiner:
-#
-# 1. "Attachar" ao conteiner com o comando :
-#
-#    # docker attach --sig-proxy=false NAME
-#
-# 2. Verificar o que for preciso no conteiner.
-#
-# 3. Sair do conteiner utilizando CTRL+C.
-

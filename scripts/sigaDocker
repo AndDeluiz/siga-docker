@@ -19,10 +19,8 @@
 # set -v    # print shell input lines as they are read
 # set -n    # read commands but do not execute them
 
-#---------------------------        INCLUDE       -----------------------------#
-. $0.conf
-
 #---------------------------   GLOBAL VARIABLES   -----------------------------#
+myHome=/opt/docker/scripts
 myName=$(basename $0)
 OSName=$(uname -s)
 myVersion=$(awk '/^# @version/ {print $3}' $0)
@@ -33,6 +31,9 @@ myTempFile=$(mktemp --tmpdir=/tmp ${myName}.XXXXXXXXXXXX)
 textBold=$(tput bold)
 textReverse=$(tput rev)
 textNormal=$(tput sgr0)
+
+#---------------------------        INCLUDE       -----------------------------#
+. ${myHome}/$(basename $0).conf
 
 #---------------------------       FUNCTIONS      -----------------------------#
 
@@ -555,6 +556,14 @@ sigaLogs()
 if [ $# -eq 0 ]
 then
    usage
+fi
+
+if [ ${USER} != "root" ]
+then
+   echo
+   echo "Você precisa ser root para executar este programa"
+   echo
+   exit 127
 fi
 
 # Efetua parsing inicial dos comandos passados via prompt

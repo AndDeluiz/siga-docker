@@ -2,9 +2,10 @@
 ################################################################################
 # @author      Anderson Deluiz <anderson.santos@gpnet.com.br>                  #
 # @name        docker-aliases                                                  #
-# @version     1.0                                                             #
-# @date        Jan 5th, 2014                                                   #
-# @description Aliases para simplificar o uso de comandos docker.              #
+# @version     1.1                                                             #
+# @date        Jan 28th, 2015                                                  #
+# @description This script helps to execute commom tasks related to docker     #
+#              environment used with SIGA application.                         #
 #                                                                              #
 # @require     N/A                                                             #
 #                                                                              #
@@ -175,7 +176,7 @@ sigaBuild ()
    echo "New Build number will be: ${textBold}${newBuildNumber}${textNormal}"
 
    echo "Building New Image! Please wait..."
-   docker build --tag=siga/${buildType}server:build-${newBuildNumber} --no-cache --force-rm ${buildDirectory}
+   docker build --tag=siga/${buildType}server:build-${newBuildNumber} --force-rm ${buildDirectory}
    if [ $? -eq 0 ]
    then
       echo
@@ -210,7 +211,7 @@ sigaBuild ()
 sigaRun()
 {
    declare -a arrayImages
-   local imageType buildNumber newEntrypoint tempVar linkContainer exposeTCPPorts cmdToRun imageTag attachVol
+   local imageType buildNumber newEntrypoint tempVar linkContainer exposeTCPPorts cmdToRun imageTag attachVol returnCode
 
    [ $# -lt 1 -o $# -gt 3 ] && usage
 
@@ -228,9 +229,9 @@ sigaRun()
       attachVol="${attachVol} -v ${tempVar}"
    done
 
-   for tempVar in ${volumesToMount[${imageType}]}
+   for tempVar in ${containerToLink[${imageType}]}
    do
-      linkContainer="${linkContainer} --link=${linkContainer}"
+      linkContainer="${linkContainer} --link=${tempVar}"
    done
 
    cmdToRun="docker run --name=\"siga-${imageType}server\" -h siga-${imageType}server ${exposeTCPPorts} ${attachVol}"
@@ -252,8 +253,19 @@ sigaRun()
       fi
    fi
 
+   echo -n "${textBold}Iniciando ambiente SIGA $(tr '[a-z]' '[A-Z]' <<< ${imageType})...${textNormal}"
    ${cmdToRun} ${linkContainer} siga/${imageType}server:${imageTag:-latest} > ${myTempFile} 2>&1
-   return $?
+   returnCode=$?
+   if [ ${returnCode} -eq 0 ]
+   then
+      echo "${textBold}OK${textNormal}"
+   else
+      echo "${textBold}FALHA${textNormal}"
+      echo "${textBold}Verifique erro abaixo:${textNormal}"
+      cat ${myTempFile}
+   fi
+
+   return 0
 }
 
 #------------------------------------------------------------------------------#

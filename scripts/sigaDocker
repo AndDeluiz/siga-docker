@@ -351,6 +351,7 @@ sigaRemoveContainer()
 #------------------------------------------------------------------------------#
 sigaRemoveImage()
 {
+   local -a arrayImages
    local buildNumber imageTag imageType returnCode
 
    case $# in
@@ -380,7 +381,7 @@ sigaRemoveImage()
       echo
       docker images siga/${imageType}server
       echo
-      read -a imageTag -t 300 -p "${textBold}Digite o TAG ou ID da(s) imagem(ns) que deseja remover (Q = Quit):${textNormal} "
+      read -a imageTag -t 300 -p "${textBold}Digite o TAG da(s) imagem(ns) que deseja remover (Q = Quit):${textNormal} "
       if [ ! ${imageTag} ]
       then
          echo "${textBold}ERRO: Nenhuma imagem informada pelo usuário!${textNormal}"
@@ -396,16 +397,38 @@ sigaRemoveImage()
       esac
    fi
 
-   if docker images siga/webserver | egrep "siga/${imageType}server[[:space:]]+${imageTag}" > /dev/null 2>&1
+   if docker images siga/${imageType}server | egrep "siga/${imageType}server[[:space:]]+${imageTag}" > /dev/null 2>&1
    then
-      docker rmi siga/${imageType}server:${imageTag}
+      echo -n "Removendo imagem siga/${imageType}server:${imageTag}..."
+      docker rmi siga/${imageType}server:${imageTag} > ${myTempFile} 2>&1
       returnCode=$?
       if [ ${returnCode} -eq 0 ]
       then
+         echo "OK"
          echo "Imagem siga/${imageType}server:${imageTag} removida com sucesso!"
+         if ! docker images siga/${imageType}server | fgrep 'latest' > /dev/null 2>&1
+	 then
+	    # Refaz ponteiramento de tag latest para último build disponível
+	    arrayImages=($(docker images siga/${imageType}server | awk '{if (NR != 1) if ($2 ~ /build-[0-9]*/) print $1":"$2}' | sort -r))
+	    lastBuildNumber=$(cut -d'-' -f 2 <<< ${arrayImages[0]})
+	    echo -n "Reapontando tag ${textBold}latest${textNormal} para imagem siga/${imageType}server:build-${lastBuildNumber}..."
+	    docker tag siga/${imageType}server:build-${lastBuildNumber} siga/${imageType}server:latest > ${myTempFile} 2>&1
+	    returnCode=$?
+	    if [ ${returnCode} -eq 0 ]
+	    then
+	       echo "OK"
+	    else
+	       echo "FALHA"
+	       echo "${textBold}Verifique erro abaixo:${textNormal}"
+	       cat ${myTempFile}
+	    fi
+	 fi
 	 return ${returnCode}
       else
-         echo "${textBold}ERRO: Imagem siga/${imageType}server:${imageTag} não pôde ser removida.${textNormal}"
+         echo "FALHA"
+         echo "${textBold}Imagem siga/${imageType}server:${imageTag} não pôde ser removida.${textNormal}"
+         echo "${textBold}Verifique erro abaixo:${textNormal}"
+	 cat ${myTempFile}
 	 return ${returnCode}
       fi
    else

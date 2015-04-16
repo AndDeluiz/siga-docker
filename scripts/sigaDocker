@@ -1,16 +1,13 @@
 #!/bin/bash
 ################################################################################
-# @author      Anderson Deluiz <anderson.santos@gpnet.com.br>                  #
+# @author      Anderson Deluiz - http://github.com/AndDeluiz/siga-docker       #
 # @name        docker-aliases                                                  #
-# @version     1.1                                                             #
-# @date        Jan 28th, 2015                                                  #
+# @version     1.2                                                             #
+# @date        Apr 14th, 2015                                                  #
 # @description This script helps to execute commom tasks related to docker     #
-#              environment used with SIGA application.                         #
+#              platforma used with SIGA environment.                           #
 #                                                                              #
-# @require     N/A                                                             #
-#                                                                              #
-# @usage       Para carregar os aliases, estando no bash prompt execute:       #
-#              # . docker-aliases                                              #
+# @require     docker-v1.3+                                                    #
 #                                                                              #
 ################################################################################
 
@@ -140,7 +137,7 @@ _EOF_
 # @exit-code                                                                   #
 #              none                                                            #
 #------------------------------------------------------------------------------#
-sigaBuild ()
+sigaBuild()
 {
    local -a arrayImages
    local lastBuildNumber buildType buildDirectory
@@ -161,7 +158,7 @@ sigaBuild ()
 
    if [ ! -r ${buildDirectory}/Dockerfile ]
    then
-      echo "${textBold}ERROR: File ${buildDirectory}/Dockerfile doesn't exist or doesn't have read permission.${textNormal}"
+      echo "${textBold}ERRO: Arquivo ${buildDirectory}/Dockerfile não existe ou não possui permissão de leitura.${textNormal}"
       return 1
    fi
 
@@ -172,23 +169,27 @@ sigaBuild ()
    lastBuildNumber=$(cut -d'-' -f 2 <<< ${arrayImages[0]})
    newBuildNumber=$(printf "%05d" $((10#${lastBuildNumber} + 1)))
 
-   echo "Last Build number is: ${textBold}${lastBuildNumber}${textNormal}"
-   echo "New Build number will be: ${textBold}${newBuildNumber}${textNormal}"
+   echo "Último Build Number: ${textBold}${lastBuildNumber}${textNormal}"
+   echo "Novo Build Number:   ${textBold}${newBuildNumber}${textNormal}"
 
-   echo "Building New Image! Please wait..."
-   docker build --tag=siga/${buildType}server:build-${newBuildNumber} --force-rm ${buildDirectory}
+   echo "Criando nova imagem! Por favor, aguarde..."
+   # Insere variaveis buildNumber e buildDate durante o build para rastreio da imagem.
+   sed "/^MAINTAINER/a\ENV buildNumber build-${newBuildNumber}\nENV buildDate $(date "+%Y-%m-%d")\n" ${buildDirectory}/Dockerfile | \
+      docker build --tag=siga/${buildType}server:build-${newBuildNumber} --force-rm -
    if [ $? -eq 0 ]
    then
       echo
-      echo "${textBold}Successfully built image siga/${buildType}server:build-${newBuildNumber}${textNormal}!!!"
+      echo "${textBold}Imagem siga/${buildType}server:build-${newBuildNumber} criada com sucesso!!!${textNormal}"
       echo 
       docker tag siga/${buildType}server:build-${newBuildNumber} siga/${buildType}server:latest
       if [ $? -eq 0 ]
       then
          echo "${textBold}Image siga/${buildType}server:build-${newBuildNumber} tagged as siga/${buildType}server:latest${textNormal}"
+         echo "${textBold}Imagem siga/${buildType}server:build-${newBuildNumber} etiquetada como siga/${buildType}server:latest${textNormal}"
          return 0
       fi
       echo "WARNING: Couldn't tag image ${textBold}siga/${buildType}server:build-${newBuildNumber}${textNormal} as ${textBold}siga/${buildType}server:latest${textNormal}"
+      echo "WARNING: Não foi possível etiquetar a imagem ${textBold}siga/${buildType}server:build-${newBuildNumber}${textNormal} como ${textBold}siga/${buildType}server:latest${textNormal}"
       return 0
    fi
 
@@ -265,7 +266,7 @@ sigaRun()
       cat ${myTempFile}
    fi
 
-   return 0
+   return ${returnCode}
 }
 
 #------------------------------------------------------------------------------#
@@ -458,37 +459,38 @@ sigaStart()
    for imageType in ${startOrder}
    do
       echo
-      echo -n "${textBold}Iniciando ambiente SIGA $(tr '[a-z]' '[A-Z]' <<< ${imageType})...${textNormal}"
+      echo "${textBold}Verificando ambiente SIGA $(tr '[a-z]' '[A-Z]' <<< ${imageType})... Aguarde${textNormal}"
       containerId=$(docker ps -a | awk '/siga-'${imageType}'server[[:space:]]*$/ {print $1}')
       if [ ${containerId} ]
       then
          runningState=$(docker inspect --format='{{.State.Running}}' ${containerId})
          if ! ${runningState}
 	 then
+            echo -n "${textBold}Iniciando ambiente SIGA $(tr '[a-z]' '[A-Z]' <<< ${imageType})...${textNormal}"
             docker start ${containerId} > ${myTempFile} 2>&1
             returnCode=$?
+            if [ ${returnCode} -eq 0 ]
+            then
+               echo "${textBold}OK${textNormal}"
+            else
+               echo "${textBold}FALHA${textNormal}"
+               echo "${textBold}Verifique erro abaixo:${textNormal}"
+               cat ${myTempFile}
+            fi
 	 else
 	    echo
 	    echo
 	    echo "${textBold}Ambiente SIGA $(tr '[a-z]' '[A-Z]' <<< ${imageType}) já em execução com ContainerId=${containerId}${textNormal}"
+            returnCode=0
 	    continue
 	 fi
       else
          sigaRun ${imageType}
          returnCode=$?
       fi
-
-      if [ ${returnCode} -eq 0 ]
-      then
-         echo "${textBold}OK${textNormal}"
-      else
-         echo "${textBold}FALHA${textNormal}"
-         echo "${textBold}Verifique erro abaixo:${textNormal}"
-         cat ${myTempFile}
-      fi
    done
 
-   return 0
+   return ${returnCode}
 }
 
 #------------------------------------------------------------------------------#
@@ -542,15 +544,15 @@ sigaStop()
 #------------------------------------------------------------------------------#
 sigaLogs()
 {
-   local containerId returnCode realTimeLog
+   local containerId logOptions numOfLines returnCode realTimeLog
 
    highRetCode=0
 
    echo
-   echo "${textBold}CONTÊINERES EM EXECUÇÃO NO SISTEMA"
+   echo "${textBold}CONTÊINERES REGISTRADOS NO SISTEMA"
    echo "==================================${textNormal}"
    echo
-   docker ps
+   docker ps -a
    echo
    read -t 300 -p "${textBold}Digite o CONTAINER ID que deseja exibir os logs (Q = Quit):${textNormal} " containerId
 
@@ -570,19 +572,22 @@ sigaLogs()
       return 0
    fi
 
-   if docker ps -q | grep "^${containerId}" > /dev/null 2>&1
+   if docker ps -aq | grep "^${containerId}" > /dev/null 2>&1
    then
+      read -p "Número de linhas a serem exibidas (Default: 100 / all = Todas as linhas): " numOfLines
       read -p "Deseja acompanhar os logs em tempo real (s/N)? " realTimeLog
       case ${realTimeLog} in
          "S"|"s")
-	    docker logs --follow ${containerId}
-	    return $?
-	    ;;
-         *)
-	    docker logs ${containerId}
-	    return $?
+	    logOptions="--follow "
 	    ;;
       esac
+      echo "--------------------------------------------------------------------------------"
+      docker logs ${logOptions} --tail=${numOfLines:-100} ${containerId}
+      echo "--------------------------------------------------------------------------------"
+      return $?
+   else
+      echo "ERRO: CONTAINER ID não encontrado!"
+      return 1
    fi
    
 }
@@ -593,10 +598,10 @@ then
    usage
 fi
 
-if [ ${USER} != "root" ]
+if [ ${USER} != "root" -a $(id -Gn | grep -q '\bdocker\b'&& echo "OK" || echo "NOK") != "OK" ]
 then
    echo
-   echo "Você precisa ser root para executar este programa"
+   echo "Você precisa ser root ou pertencer ao grupo 'docker' para executar este programa"
    echo
    exit 127
 fi

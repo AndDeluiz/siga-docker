@@ -184,7 +184,6 @@ sigaBuild()
       docker tag siga/${buildType}server:build-${newBuildNumber} siga/${buildType}server:latest
       if [ $? -eq 0 ]
       then
-         echo "${textBold}Image siga/${buildType}server:build-${newBuildNumber} tagged as siga/${buildType}server:latest${textNormal}"
          echo "${textBold}Imagem siga/${buildType}server:build-${newBuildNumber} etiquetada como siga/${buildType}server:latest${textNormal}"
          return 0
       fi

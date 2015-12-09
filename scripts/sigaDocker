@@ -2,8 +2,8 @@
 ################################################################################
 # @author      Anderson Deluiz - http://github.com/AndDeluiz/siga-docker       #
 # @name        docker-aliases                                                  #
-# @version     1.2                                                             #
-# @date        Apr 14th, 2015                                                  #
+# @version     1.2.1                                                           #
+# @date        Dec 12th, 2015                                                  #
 # @description This script helps to execute commom tasks related to docker     #
 #              platforma used with SIGA environment.                           #
 #                                                                              #
@@ -181,7 +181,7 @@ sigaBuild()
       echo
       echo "${textBold}Imagem siga/${buildType}server:build-${newBuildNumber} criada com sucesso!!!${textNormal}"
       echo 
-      docker tag siga/${buildType}server:build-${newBuildNumber} siga/${buildType}server:latest
+      docker tag -f siga/${buildType}server:build-${newBuildNumber} siga/${buildType}server:latest
       if [ $? -eq 0 ]
       then
          echo "${textBold}Imagem siga/${buildType}server:build-${newBuildNumber} etiquetada como siga/${buildType}server:latest${textNormal}"
